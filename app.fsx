@@ -31,11 +31,13 @@ let blob = createAppendBlob()
 // When we get POST request to /log, write the received 
 // data to the log blob (on a single line)
 let app =
-  path "/log" >=> POST >=> request (fun req ->
-    let line = System.Text.UTF32Encoding.UTF8.GetString(req.rawForm)
-    let line = line.Replace('\n',' ').Replace('\r',' ')
-    blob.AppendText(line + "\n")
-    Successful.ok [||])
+  choose [
+    path "/" >=> Successful.OK "Service is running..."
+    path "/log" >=> POST >=> request (fun req ->
+      let line = System.Text.UTF32Encoding.UTF8.GetString(req.rawForm)
+      let line = line.Replace('\n',' ').Replace('\r',' ')
+      blob.AppendText(line + "\n")
+      Successful.ok [||]) ]
 
 // When port was specified, we start the app (in Azure), 
 // otherwise we do nothing (it is hosted by 'build.fsx')
