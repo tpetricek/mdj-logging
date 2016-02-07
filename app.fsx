@@ -35,7 +35,6 @@ let app =
     path "/" >=> Successful.OK "Service is running..."
     path "/log" >=> POST >=> request (fun req ->
       let line = System.Text.UTF32Encoding.UTF8.GetString(req.rawForm)
-      let line = line.Replace('\n',' ').Replace('\r',' ')
       blob.AppendText(line + "\n")
       Successful.ok [||]) ]
 
