@@ -8,6 +8,7 @@ open Suave
 open System
 open FSharp.Data
 open Suave.Filters
+open Suave.Writers
 open Suave.Operators
 open Microsoft.WindowsAzure.Storage
 
@@ -36,7 +37,9 @@ let app =
     path "/log" >=> POST >=> request (fun req ->
       let line = System.Text.UTF32Encoding.UTF8.GetString(req.rawForm)
       blob.AppendText(line + "\n")
-      Successful.ok [||]) ]
+      setHeader  "Access-Control-Allow-Origin" "*"
+      >=> setHeader "Access-Control-Allow-Headers" "content-type"
+      >=> Successful.ok [||]) ]
 
 // When port was specified, we start the app (in Azure), 
 // otherwise we do nothing (it is hosted by 'build.fsx')
