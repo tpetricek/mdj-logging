@@ -44,7 +44,8 @@ let app =
   >=> choose [
     OPTIONS >=> Successful.OK "CORS approved"
     GET >=> path "/" >=> Successful.OK "Service is running..."
-    POST >=> pathScan "/log/%s/" (fun name ctx -> async {
+    POST >=> pathScan "/log/%s" (fun name ctx -> async {
+      let name = name.TrimEnd('/')
       if name |> Seq.exists (fun c -> c < 'a' || c > 'z') then 
         return! RequestErrors.BAD_REQUEST "Wrong log name" ctx
       else
