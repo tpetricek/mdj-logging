@@ -1,2 +1,5 @@
+.vs
+bin
 .paket/paket.exe
 packages
+obj

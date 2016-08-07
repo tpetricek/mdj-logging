@@ -1,175 +1,95 @@
 // --------------------------------------------------------------------------------------
-// A simple FAKE build script that:
-//  1) Hosts Suave server locally & reloads web part that is defined in 'app.fsx'
-//  2) Deploys the web application to Azure web sites when called with 'build deploy'
+// FAKE build script
 // --------------------------------------------------------------------------------------
 
-#r "packages/FSharp.Compiler.Service/lib/net45/FSharp.Compiler.Service.dll"
-#r "packages/Suave/lib/net40/Suave.dll"
 #r "packages/FAKE/tools/FakeLib.dll"
 open Fake
-
 open System
 open System.IO
-open Suave
-open Suave.Web
-open Microsoft.FSharp.Compiler.Interactive.Shell
+open FSharp.Data
+
+System.Environment.CurrentDirectory <- __SOURCE_DIRECTORY__
+let fsiPath = "packages/FSharp.Compiler.Tools/tools/fsiAnyCpu.exe"
 
 // --------------------------------------------------------------------------------------
-// The following uses FileSystemWatcher to look for changes in 'app.fsx'. When
-// the file changes, we run `#load "app.fsx"` using the F# Interactive service
-// and then get the `App.app` value (top-level value defined using `let app = ...`).
-// The loaded WebPart is then hosted at localhost:8083.
+// For deployed run - compile as an executable
 // --------------------------------------------------------------------------------------
 
-let sbOut = new Text.StringBuilder()
-let sbErr = new Text.StringBuilder()
+Target "clean" (fun _ ->
+  CleanDirs ["bin"]
+)
 
-let fsiSession =
-  let inStream = new StringReader("")
-  let outStream = new StringWriter(sbOut)
-  let errStream = new StringWriter(sbErr)
-  let fsiConfig = FsiEvaluationSession.GetDefaultConfiguration()
-  let argv = Array.append [|"/fake/fsi.exe"; "--quiet"; "--noninteractive"; "-d:DO_NOT_START_SERVER"|] [||]
-  FsiEvaluationSession.Create(fsiConfig, argv, inStream, outStream, errStream)
+Target "build" (fun _ ->
+  [ "logging.sln" ]
+  |> MSBuildRelease "" "Rebuild"
+  |> Log ""
+)
 
-let reportFsiError (e:exn) =
-  traceError "Reloading app.fsx script failed."
-  traceError (sprintf "Message: %s\nError: %s" e.Message (sbErr.ToString().Trim()))
-  sbErr.Clear() |> ignore
-
-let reloadScript () =
-  try    
-    //Reload application
-    traceImportant "Reloading app.fsx script..."
-    let appFsx = __SOURCE_DIRECTORY__ @@ "app.fsx"
-    fsiSession.EvalInteraction(sprintf "#load @\"%s\"" appFsx)
-    fsiSession.EvalInteraction("open App")
-    match fsiSession.EvalExpression("app") with
-    | Some app -> Some(app.ReflectionValue :?> WebPart)
-    | None -> failwith "Couldn't get 'app' value"
-  with e -> reportFsiError e; None
+"clean" ==> "build"
 
 // --------------------------------------------------------------------------------------
-// Suave server that redirects all request to currently loaded version
+// For local run - automatically reloads scripts
 // --------------------------------------------------------------------------------------
 
-let currentApp = ref (fun _ -> async { return None })
+let startServers () = 
+  ExecProcessWithLambdas
+    (fun info -> 
+        info.FileName <- System.IO.Path.GetFullPath fsiPath
+        info.Arguments <- "--load:src/debug.fsx"
+        info.WorkingDirectory <- __SOURCE_DIRECTORY__)
+    TimeSpan.MaxValue false ignore ignore 
 
-let rec findPort port =
-  try
-    let tcpListener = System.Net.Sockets.TcpListener(System.Net.IPAddress.Parse("127.0.0.1"), port)
-    tcpListener.Start()
-    tcpListener.Stop()
-    port
-  with :? System.Net.Sockets.SocketException as ex ->
-    findPort (port + 1)
+Target "start" (fun _ ->
+  async { return startServers() } 
+  |> Async.Ignore
+  |> Async.Start
 
-let getLocalServerConfig port =
-  { defaultConfig with
-      homeFolder = Some __SOURCE_DIRECTORY__
-      logger = Logging.Loggers.saneDefaultsFor Logging.LogLevel.Debug
-      bindings = [ HttpBinding.mkSimple HTTP  "127.0.0.1" port ] }
-
-let reloadAppServer (changedFiles: string seq) =
-  traceImportant <| sprintf "Changes in %s" (String.Join(",",changedFiles))
-  reloadScript() |> Option.iter (fun app ->
-    currentApp.Value <- app
-    traceImportant "Refreshed app." )
+  let mutable started = false
+  while not started do
+    try
+      use wc = new System.Net.WebClient()
+      started <- wc.DownloadString("http://localhost:8898/") |> String.IsNullOrWhiteSpace |> not
+    with _ ->
+      System.Threading.Thread.Sleep(1000)
+      printfn "Waiting for servers to start...."
+  traceImportant "Servers started...."
+  System.Diagnostics.Process.Start("http://localhost:8898/") |> ignore
+)
 
 Target "run" (fun _ ->
-  let app ctx = currentApp.Value ctx
-  let port = findPort 8083
-  let _, server = startWebServerAsync (getLocalServerConfig port) app
-
-  // Start Suave to host it on localhost
-  reloadAppServer ["app.fsx"]
-  Async.Start(server)
-  // Open web browser with the loaded file
-  System.Diagnostics.Process.Start(sprintf "http://localhost:%d" port) |> ignore
-  
-  // Watch for changes & reload when app.fsx changes
-  let sources = 
-    { BaseDirectory = __SOURCE_DIRECTORY__
-      Includes = [ "**/*.fsx"; "**/*.fs" ; "**/*.fsproj"; "web/content/app/*.js" ]; 
-      Excludes = [] }
-      
-  use watcher = sources |> WatchChanges (Seq.map (fun x -> x.FullPath) >> reloadAppServer)
-  
-  traceImportant "Waiting for app.fsx edits. Press any key to stop."
-
-  System.Threading.Thread.Sleep(System.Threading.Timeout.Infinite)
+  traceImportant "Press any key to stop!"
+  Console.ReadLine() |> ignore
 )
 
-// --------------------------------------------------------------------------------------
-// Targets for running build script in background (for Atom)
-// --------------------------------------------------------------------------------------
-
-open System.Diagnostics
-
-let runningFileLog = __SOURCE_DIRECTORY__ @@ "build.log"
-let runningFile = __SOURCE_DIRECTORY__ @@ "build.running"
-
-Target "spawn" (fun _ ->
-  if File.Exists(runningFile) then
-    failwith "The build is already running!"
-
-  let ps =
-    ProcessStartInfo
-      ( WorkingDirectory = __SOURCE_DIRECTORY__,
-        FileName = __SOURCE_DIRECTORY__  @@ "packages/FAKE/tools/FAKE.exe",
-        Arguments = "run --fsiargs build.fsx",
-        RedirectStandardOutput = true,
-        RedirectStandardError = true,
-        UseShellExecute = false )
-  use fs = new FileStream(runningFileLog, FileMode.Create, FileAccess.ReadWrite, FileShare.Read)
-  use sw = new StreamWriter(fs)
-  let p = Process.Start(ps)
-  p.ErrorDataReceived.Add(fun data -> printfn "%s" data.Data; sw.WriteLine(data.Data); sw.Flush())
-  p.OutputDataReceived.Add(fun data -> printfn "%s" data.Data; sw.WriteLine(data.Data); sw.Flush())
-  p.EnableRaisingEvents <- true
-  p.BeginOutputReadLine()
-  p.BeginErrorReadLine()
-
-  File.WriteAllText(runningFile, string p.Id)
-  while File.Exists(runningFile) do
-    System.Threading.Thread.Sleep(500)  
-  p.Kill()
-)
-
-Target "attach" (fun _ ->
-  if not (File.Exists(runningFile)) then
-    failwith "The build is not running!"
-  use fs = new FileStream(runningFileLog, FileMode.Open, FileAccess.Read, FileShare.ReadWrite)
-  use sr = new StreamReader(fs)
-  while File.Exists(runningFile) do
-    let msg = sr.ReadLine()
-    if not (String.IsNullOrEmpty(msg)) then
-      printfn "%s" msg 
-    else System.Threading.Thread.Sleep(500)
-)
-
-Target "stop" (fun _ ->
-  if not (File.Exists(runningFile)) then
-    failwith "The build is not running!"
-  File.Delete(runningFile)
-)
+"start" ==> "run"
 
 // --------------------------------------------------------------------------------------
-// Minimal Azure deploy script - just overwrite old files with new ones
+// Azure - deploy copies the binary to wwwroot/bin
 // --------------------------------------------------------------------------------------
+
+let newName prefix f = 
+  Seq.initInfinite (sprintf "%s_%d" prefix) |> Seq.skipWhile (f >> not) |> Seq.head
 
 Target "deploy" (fun _ ->
-  let sourceDirectory = __SOURCE_DIRECTORY__
-  let wwwrootDirectory = __SOURCE_DIRECTORY__ @@ "../wwwroot"
-  CleanDir wwwrootDirectory
-  CopyRecursive sourceDirectory wwwrootDirectory false |> ignore
+  // Pick a subfolder that does not exist
+  let wwwroot = "../wwwroot"
+  let subdir = newName "deploy" (fun sub -> not (Directory.Exists(wwwroot </> sub)))
+  
+  // Deploy everything into new empty folder
+  let deployroot = wwwroot </> subdir
+  CleanDir deployroot
+  CleanDir (deployroot </> "bin")
+  CopyRecursive "bin" (deployroot </> "bin") false |> ignore
+  
+  let config = File.ReadAllText("web.config").Replace("%DEPLOY_SUBDIRECTORY%", subdir)
+  File.WriteAllText(wwwroot </> "web.config", config)
+
+  // Try to delete previous folders, but ignore failures
+  for dir in Directory.GetDirectories(wwwroot) do
+    if Path.GetFileName(dir) <> subdir then 
+      try CleanDir dir; DeleteDir dir with _ -> ()
 )
 
-
-// -------------------------------------------------------------------------------------
-// Minifying JS for better performance 
-// This is using built in NPMHelper and other things are getting done by node js
-// -------------------------------------------------------------------------------------
+"build" ==> "deploy"
 
 RunTargetOrDefault "run"
