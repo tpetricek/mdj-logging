@@ -16,12 +16,15 @@ open Microsoft.WindowsAzure.Storage
 
 /// Creates a new append blob in a `<name>` container in a storage
 /// account specifeid in `CUSTOMCONNSTR_THEGAMMALOGS_STORAGE` env var
-let createAppendBlob name =
+let getContainer name = 
   let storageEnvVar = "CUSTOMCONNSTR_MDJLOGS_STORAGE"
   let connStr = Environment.GetEnvironmentVariable(storageEnvVar) 
   let account = CloudStorageAccount.Parse(connStr)
   let client = account.CreateCloudBlobClient()
-  let logs = client.GetContainerReference(name)
+  client.GetContainerReference(name)
+
+let createAppendBlob name =
+  let logs = getContainer name
   logs.CreateIfNotExists(Blob.BlobContainerPublicAccessType.Container) |> ignore
   let logName = sprintf "logs-%s.log" (DateTime.Now.ToString("yyyy_MM_dd-HH_mm_ss"))
   let appendBlob = logs.GetAppendBlobReference(logName)
@@ -44,6 +47,10 @@ let app =
   >=> choose [
     OPTIONS >=> Successful.OK "CORS approved"
     GET >=> path "/" >=> Successful.OK "Service is running..."
+    GET >=> pathScan "/%s" (fun name ->
+      let cont = getContainer name 
+      Successful.OK(String.concat "\n" [ for b in cont.ListBlobs() -> b.Uri.ToString() ])
+    )
     POST >=> pathScan "/log/%s" (fun name ctx -> async {
       let name = name.TrimEnd('/')
       if name |> Seq.exists (fun c -> c < 'a' || c > 'z') then 
