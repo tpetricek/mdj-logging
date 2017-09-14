@@ -20,7 +20,7 @@ Target "clean" (fun _ ->
 )
 
 Target "build" (fun _ ->
-  [ "thegamma-logging.sln" ]
+  [ "mdj-logging.sln" ]
   |> MSBuildRelease "" "Rebuild"
   |> Log ""
 )

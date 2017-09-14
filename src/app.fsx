@@ -17,7 +17,7 @@ open Microsoft.WindowsAzure.Storage
 /// Creates a new append blob in a `<name>` container in a storage
 /// account specifeid in `CUSTOMCONNSTR_THEGAMMALOGS_STORAGE` env var
 let createAppendBlob name =
-  let storageEnvVar = "CUSTOMCONNSTR_THEGAMMALOGS_STORAGE"
+  let storageEnvVar = "CUSTOMCONNSTR_MDJLOGS_STORAGE"
   let connStr = Environment.GetEnvironmentVariable(storageEnvVar) 
   let account = CloudStorageAccount.Parse(connStr)
   let client = account.CreateCloudBlobClient()
