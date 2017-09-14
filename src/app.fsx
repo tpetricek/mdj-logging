@@ -22,7 +22,7 @@ let createAppendBlob name =
   let account = CloudStorageAccount.Parse(connStr)
   let client = account.CreateCloudBlobClient()
   let logs = client.GetContainerReference(name)
-  logs.CreateIfNotExists() |> ignore
+  logs.CreateIfNotExists(Blob.BlobContainerPublicAccessType.Container) |> ignore
   let logName = sprintf "logs-%s.log" (DateTime.Now.ToString("yyyy_MM_dd-HH_mm_ss"))
   let appendBlob = logs.GetAppendBlobReference(logName)
   appendBlob.CreateOrReplace()
